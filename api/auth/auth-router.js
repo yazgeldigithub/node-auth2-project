@@ -1,42 +1,63 @@
-const router = require("express").Router();
+const bcrypt = require('bcryptjs');
+const router = require('express').Router();
 const { checkUsernameExists, validateRoleName } = require('./auth-middleware');
-const { JWT_SECRET } = require("../secrets"); // use this secret!
+const { JWT_SECRET } = require('../secrets'); // use this secret!
+const tokenBuilder = require('./token-builder');
+const Users = require('../users/users-model.js');
 
-router.post("/register", validateRoleName, (req, res, next) => {
-  /**
-    [POST] /api/auth/register { "username": "anna", "password": "1234", "role_name": "angel" }
-
-    response:
-    status 201
-    {
-      "user"_id: 3,
+router.post('/register', validateRoleName, (req, res, next) => {
+	/** [POST] /api/auth/register { "username": "anna", "password": "1234", "role_name": "angel" }
+    response: status 201 { "user"_id: 3,
       "username": "anna",
-      "role_name": "angel"
-    }
-   */
+      "role_name": "angel" } */
+	const { username, password } = req.body;
+	let user = { username, password, role_name: req.role_name };
+
+	// bcrypting the password before saving
+	const rounds = process.env.BCRYPT_ROUNDS || 8; // 2 ^ 8
+	const hash = bcrypt.hashSync(user.password, rounds);
+
+	// never save the plain text password in the db
+	user.password = hash;
+
+	Users.add(user)
+		.then(newUser => {
+			res.status(201).json(newUser[0]);
+		})
+		.catch(next);
 });
 
-
-router.post("/login", checkUsernameExists, (req, res, next) => {
-  /**
-    [POST] /api/auth/login { "username": "sue", "password": "1234" }
-
-    response:
-    status 200
-    {
-      "message": "sue is back!",
-      "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.ETC.ETC"
-    }
-
+router.post('/login', checkUsernameExists, (req, res, next) => {
+	/** [POST] /api/auth/login { "username": "sue", "password": "1234" }
+    response: status 200
+    { "message": "sue is back!",
+      "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.ETC.ETC" }
     The token must expire in one day, and must provide the following information
     in its payload:
-
     {
       "subject"  : 1       // the user_id of the authenticated user
       "username" : "bob"   // the username of the authenticated user
       "role_name": "admin" // the role of the authenticated user
-    }
-   */
+    } */
+	// let { username, password } = req.body;
+	const { username, role_name, user_id } = req.user;
+
+	if (bcrypt.compareSync(req.body.password, req.user.password)) {
+		const token = tokenBuilder({
+			user_id,
+			username,
+			role_name
+		});
+		res.status(200).json({
+			message: `${username} is back!`,
+			token
+		});
+	} else {
+		next({
+			status: 401,
+			message: 'Invalid credentials'
+		});
+	}
 });
 
 module.exports = router;
